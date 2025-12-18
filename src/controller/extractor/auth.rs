@@ -30,10 +30,9 @@ use axum_extra::extract::cookie;
 use serde::{Deserialize, Serialize};
 use tracing;
 
-use crate::{app::AppContext, auth, config::JWT as JWTConfig, errors::Error, Result as LocoResult};
-
 #[cfg(feature = "with-db")]
 use crate::model::{Authenticable, ModelError};
+use crate::{app::AppContext, auth, config::JWT as JWTConfig, errors::Error, Result as LocoResult};
 
 // ---------------------------------------
 //
@@ -69,7 +68,14 @@ where
 
         let token = extract_token(get_jwt_from_config(&ctx)?, parts)?.ok_or_else(
             // If we get here, none of the locations worked
-            || Error::Unauthorized("Token not found in any of the configured JWT locations. Please check your auth.jwt.location configuration.".to_string()))?;
+            || {
+                Error::Unauthorized(
+                    "Token not found in any of the configured JWT locations. Please check your \
+                     auth.jwt.location configuration."
+                        .to_string(),
+                )
+            },
+        )?;
 
         let jwt_secret = ctx.config.get_jwt_config()?;
 
@@ -118,7 +124,7 @@ where
 
             match auth::jwt::JWT::new(&jwt_secret.secret).validate(&token) {
                 Ok(claims) => match T::find_by_claims_key(&ctx.db, &claims.claims.pid).await {
-                    Ok(user) => Ok(Some(JWTWithUser {
+                    Ok(user) => Ok(Some(Self {
                         claims: claims.claims,
                         user,
                     })),
@@ -163,11 +169,19 @@ where
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Error> {
         extract_jwt_from_request_parts(parts, state)?.ok_or_else(
             // If we get here, none of the locations worked
-            || Error::Unauthorized("Token not found in any of the configured JWT locations. Please check your auth.jwt.location configuration.".to_string()))
+            || {
+                Error::Unauthorized(
+                    "Token not found in any of the configured JWT locations. Please check your \
+                     auth.jwt.location configuration."
+                        .to_string(),
+                )
+            },
+        )
     }
 }
 
-// Implement the OptionalFromRequestParts trait for the Auth struct, for routes where behaviour depends on auth status.
+// Implement the OptionalFromRequestParts trait for the Auth struct, for routes
+// where behaviour depends on auth status.
 impl<S> OptionalFromRequestParts<S> for JWT
 where
     AppContext: FromRef<S>,
@@ -180,7 +194,8 @@ where
     }
 }
 
-/// extract a [JWT] token from request parts, using a non-mutable reference to the [Parts]
+/// extract a [JWT] token from request parts, using a non-mutable reference to
+/// the [Parts]
 ///
 /// # Errors
 /// Return an error when JWT token not configured or when the token is not valid
@@ -225,8 +240,9 @@ pub fn get_jwt_from_config(ctx: &AppContext) -> LocoResult<&JWTConfig> {
 ///
 /// # Errors
 ///
-/// Returns an error when the token cannot be extracted from any of the configured locations,
-/// such as missing headers, invalid formats, or inaccessible request data.
+/// Returns an error when the token cannot be extracted from any of the
+/// configured locations, such as missing headers, invalid formats, or
+/// inaccessible request data.
 pub fn extract_token(jwt_config: &JWTConfig, parts: &Parts) -> LocoResult<Option<String>> {
     let locations = get_jwt_locations(jwt_config.location.as_ref());
 
@@ -296,12 +312,8 @@ pub fn extract_token_from_cookie(name: &str, parts: &Parts) -> LocoResult<Option
 /// # Errors
 /// when token value from cookie is not found
 pub fn extract_token_from_query(name: &str, parts: &Parts) -> LocoResult<Option<String>> {
-    // LogoResult
-    if let Ok(parameters) = Query::<HashMap<String, String>>::try_from_uri(&parts.uri) {
-        Ok(parameters.get(name).cloned())
-    } else {
-        Ok(None)
-    }
+    Query::<HashMap<String, String>>::try_from_uri(&parts.uri)
+        .map_or_else(|_| Ok(None), |parameters| Ok(parameters.get(name).cloned()))
 }
 
 // ---------------------------------------
@@ -904,7 +916,7 @@ mod tests {
             .uri("https://loco.rs")
             .body(())
             .unwrap();
-        let (mut parts, ()) = request.into_parts();
+        let (parts, ()) = request.into_parts();
 
         let result = extract_token(&jwt_config, &parts);
         assert!(result.is_ok());
